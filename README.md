@@ -8,8 +8,14 @@ Windows-Programm, das ausgewählte Ordner oder Dateien automatisch auf eine ande
 - Wiederherstellen von Versionen/gelöschten Dateien, Autostart, Tray-Symbol, hell/dunkel
 - Update-Knopf: holt die neueste Version aus den GitHub-Releases, prüft SHA-256 und Selbsttest, tauscht die EXE aus und startet neu (keine Neuinstallation)
 
-## Download
-Neueste Version: https://github.com/Dodovking/SicherungsWaechter/releases/latest – `SicherungsWaechter.exe` herunterladen und starten.
+## Installieren (ohne SmartScreen-Sperre)
+PowerShell öffnen und einfügen:
+```
+irm https://raw.githubusercontent.com/Dodovking/SicherungsWaechter/main/install.ps1 | iex
+```
+Installiert nach `%LOCALAPPDATA%\SicherungsWaechter`, legt Verknüpfungen auf Desktop und im Startmenü an und startet das Programm. Derselbe Befehl aktualisiert auch.
+
+Alternativ: https://github.com/Dodovking/SicherungsWaechter/releases/latest – `SicherungsWaechter.exe` herunterladen (Eigenschaften → „Zulassen“, falls Windows blockiert).
 
 ## Aufbau
 - `src/SicherungsWaechter.Core` – Sync-Engine, Überwachung, Einstellungen (plattformunabhängig, getestet)
