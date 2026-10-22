@@ -146,6 +146,13 @@ public static class Theme
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
+    private const int DwmDefaultColor = unchecked((int)0xFFFFFFFF);
+
+    private static int ColorRef(Color c) => c.R | (c.G << 8) | (c.B << 16);
+
     private static bool _appModeSet;
 
     public static void ApplyTitleBar(Form f)
@@ -156,6 +163,16 @@ public static class Theme
             int dark = P.Dark ? 1 : 0;
             if (DwmSetWindowAttribute(f.Handle, 20, ref dark, sizeof(int)) != 0)
                 DwmSetWindowAttribute(f.Handle, 19, ref dark, sizeof(int));
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                int caption = P.Dark ? ColorRef(P.Surface) : DwmDefaultColor;
+                int text = P.Dark ? ColorRef(P.Text) : DwmDefaultColor;
+                int border = P.Dark ? ColorRef(P.Border) : DwmDefaultColor;
+                DwmSetWindowAttribute(f.Handle, 35, ref caption, sizeof(int));
+                DwmSetWindowAttribute(f.Handle, 36, ref text, sizeof(int));
+                DwmSetWindowAttribute(f.Handle, 34, ref border, sizeof(int));
+            }
+            SetWindowPos(f.Handle, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020);
             if (f.Visible)
             {
                 bool active = Form.ActiveForm == f;

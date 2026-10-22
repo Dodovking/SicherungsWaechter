@@ -276,6 +276,12 @@ public sealed class MainForm : Form
         Theme.ApplyTitleBar(this);
     }
 
+    protected override void OnVisibleChanged(EventArgs e)
+    {
+        base.OnVisibleChanged(e);
+        if (Visible && IsHandleCreated) Theme.ApplyTitleBar(this);
+    }
+
     private void ApplyTheme()
     {
         Theme.Apply(this);
