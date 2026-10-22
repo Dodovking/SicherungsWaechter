@@ -6,13 +6,20 @@ Windows-Programm, das ausgewählte Ordner oder Dateien automatisch auf eine ande
 - Ältere Fassungen in `_Versionen`, gelöschte Dateien in `_Gelöscht` (Aufbewahrung einstellbar)
 - Festplatte abgesteckt → Änderungen werden nachgeholt
 - Wiederherstellen von Versionen/gelöschten Dateien, Autostart, Tray-Symbol, hell/dunkel
+- Update-Knopf: holt die neueste Version aus den GitHub-Releases, prüft SHA-256 und Selbsttest, tauscht die EXE aus und startet neu (keine Neuinstallation)
+
+## Download
+Neueste Version: https://github.com/Dodovking/SicherungsWaechter/releases/latest – `SicherungsWaechter.exe` herunterladen und starten.
 
 ## Aufbau
 - `src/SicherungsWaechter.Core` – Sync-Engine, Überwachung, Einstellungen (plattformunabhängig, getestet)
 - `src/SicherungsWaechter.Gui` – WinForms-Oberfläche (Startargumente: `--minimiert`, `--daten <ordner>`, `--design hell|dunkel`)
 - `tests/SicherungsWaechter.Tests` – xUnit
 
-## Bauen
+## Bauen / Veröffentlichen
+Neue Version: `<Version>` in `src/SicherungsWaechter.Gui/SicherungsWaechter.Gui.csproj` erhöhen, dann `tools/release.sh "Was ist neu"`.
+Test-Updatequelle: `--update-quelle <URL zu einer Release-JSON>`.
+
 ```
 dotnet test
 dotnet publish src/SicherungsWaechter.Gui -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o artifacts/publish

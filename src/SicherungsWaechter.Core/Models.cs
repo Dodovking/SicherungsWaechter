@@ -54,4 +54,5 @@ public sealed class AppSettings
     public int FullScanIntervalMinutes { get; set; } = 60;
     public bool Paused { get; set; }
     public bool TrayHintShown { get; set; }
+    public bool CheckForUpdates { get; set; } = true;
 }

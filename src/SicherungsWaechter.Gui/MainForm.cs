@@ -13,6 +13,12 @@ public sealed class MainForm : Form
     private readonly FlatButton _syncAll = new("Jetzt alles sichern");
     private readonly FlatButton _pause = new("Pausieren");
     private readonly FlatButton _settings = new("Einstellungen", ButtonKind.Ghost);
+    private readonly FlatButton _update = new("Updates", ButtonKind.Ghost);
+    private readonly ToolStripMenuItem _trayUpdate = new("Nach Updates suchen …");
+    private readonly System.Windows.Forms.Timer _updateTimer = new();
+    private readonly UpdateChecker _updateChecker;
+    private UpdateInfo? _available;
+    private bool _updating;
     private readonly Panel _tabBar = new() { Dock = DockStyle.Top };
     private readonly Segmented _tabs = new("Sicherungsaufträge", "Protokoll");
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
@@ -30,9 +36,12 @@ public sealed class MainForm : Form
     private string _trayState = "";
     private bool _exiting;
 
-    public MainForm(BackupService service, string? dataDirArg)
+    public string[] StartArgs { get; init; } = [];
+
+    public MainForm(BackupService service, string? dataDirArg, string? updateSource = null)
     {
         _service = service;
+        _updateChecker = new UpdateChecker(releaseUrl: updateSource);
         _dataDirArg = dataDirArg;
         Text = "SicherungsWächter";
         Icon = _icon;
@@ -40,7 +49,7 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.None;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(Ui.S(1000), Ui.S(700));
-        MinimumSize = new Size(Ui.S(880), Ui.S(560));
+        MinimumSize = new Size(Ui.S(960), Ui.S(560));
         AllowDrop = true;
 
         BuildHeader();
@@ -76,6 +85,13 @@ public sealed class MainForm : Form
         ApplyTheme();
         RebuildCards();
         _timer.Start();
+        _updateTimer.Interval = 15_000;
+        _updateTimer.Tick += async (_, _) =>
+        {
+            _updateTimer.Interval = 12 * 60 * 60 * 1000;
+            if (_service.Settings.CheckForUpdates) await CheckUpdatesQuietly();
+        };
+        _updateTimer.Start();
     }
 
     private void UiInvoke(Action a)
@@ -89,13 +105,13 @@ public sealed class MainForm : Form
     {
         _header.Height = Ui.S(84);
         _header.Padding = new Padding(Ui.S(24), 0, Ui.S(24), 0);
-        _header.Controls.AddRange([_title, _subtitle, _new, _syncAll, _pause, _settings]);
+        _header.Controls.AddRange([_title, _subtitle, _new, _syncAll, _pause, _update, _settings]);
         _header.Layout += (_, _) =>
         {
             _title.Location = new Point(Ui.S(24), Ui.S(16));
             _subtitle.Location = new Point(Ui.S(26), _title.Bottom + Ui.S(1));
             int x = _header.Width - Ui.S(24);
-            foreach (var b in new Control[] { _settings, _pause, _syncAll, _new })
+            foreach (var b in new Control[] { _settings, _update, _pause, _syncAll, _new })
             {
                 x -= b.Width;
                 b.Location = new Point(x, (_header.Height - b.Height) / 2);
@@ -112,6 +128,7 @@ public sealed class MainForm : Form
         _syncAll.Click += (_, _) => { _service.SyncAllNow(); _subtitle.Text = "Komplettprüfung aller Aufträge gestartet …"; };
         _pause.Click += (_, _) => TogglePause();
         _settings.Click += (_, _) => OpenSettings();
+        _update.Click += (_, _) => OpenUpdate();
 
         _tabBar.Height = Ui.S(62);
         _tabBar.Controls.Add(_tabs);
@@ -167,7 +184,8 @@ public sealed class MainForm : Form
         var sync = new ToolStripMenuItem("Jetzt alles sichern", null, (_, _) => _service.SyncAllNow());
         _trayPause.Click += (_, _) => TogglePause();
         var exit = new ToolStripMenuItem("Beenden", null, (_, _) => ExitApp());
-        _trayMenu.Items.AddRange([open, sync, _trayPause, new ToolStripSeparator(), exit]);
+        _trayUpdate.Click += (_, _) => { ShowWindow(); OpenUpdate(); };
+        _trayMenu.Items.AddRange([open, sync, _trayPause, _trayUpdate, new ToolStripSeparator(), exit]);
         _trayMenu.Font = Ui.Base;
         _tray.ContextMenuStrip = _trayMenu;
         _tray.Icon = _icon;
@@ -423,6 +441,67 @@ public sealed class MainForm : Form
             _service.RemoveJob(job.Id);
     }
 
+    private async Task CheckUpdatesQuietly()
+    {
+        UpdateInfo? info;
+        try { info = await _updateChecker.GetLatestAsync(); }
+        catch (Exception e) when (e is UpdateException or OperationCanceledException) { return; }
+        if (info == null || !info.IsNewerThan(Updater.CurrentVersion) || IsDisposed) return;
+        bool fresh = _available?.Version != info.Version;
+        SetAvailable(info);
+        if (fresh && _service.Settings.ShowNotifications)
+            _tray.ShowBalloonTip(8000, $"Update {info.Version.ToString(3)} verfügbar",
+                "Klicke oben im Fenster auf „Update“, um es zu installieren. Das dauert nur ein paar Sekunden.", ToolTipIcon.Info);
+    }
+
+    private void SetAvailable(UpdateInfo? info)
+    {
+        _available = info != null && info.IsNewerThan(Updater.CurrentVersion) ? info : null;
+        _update.Text = _available == null ? "Updates" : $"Update {_available.Version.ToString(3)}";
+        _update.Kind = _available == null ? ButtonKind.Ghost : ButtonKind.Primary;
+        _update.FitWidth();
+        _update.Invalidate();
+        _trayUpdate.Text = _available == null ? "Nach Updates suchen …" : $"Update {_available.Version.ToString(3)} installieren …";
+        _header.PerformLayout();
+    }
+
+    private void OpenUpdate()
+    {
+        if (_updating) return;
+        using var f = new UpdateForm(_updateChecker, _available);
+        var result = f.ShowDialog(this);
+        SetAvailable(f.Info);
+        if (result == DialogResult.OK && f.Info != null) PerformUpdate(f.Info);
+    }
+
+    private void PerformUpdate(UpdateInfo info)
+    {
+        _updating = true;
+        _service.Log.Write(LogLevel.Info, "", $"Update auf Version {info.Version.ToString(3)} – Programm startet neu");
+        try
+        {
+            Updater.Swap();
+            Updater.StartUpdated(StartArgs);
+        }
+        catch (Exception e)
+        {
+            try { Updater.Rollback(); } catch { }
+            _updating = false;
+            _service.Log.Write(LogLevel.Error, "", "Update fehlgeschlagen: " + e.Message);
+            MessageBox.Show(this, "Das Update konnte nicht installiert werden:\n\n" + e.Message + "\n\nDie bisherige Version läuft unverändert weiter.",
+                "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _exiting = true;
+        _tray.Visible = false;
+        Close();
+        Application.Exit();
+    }
+
+    public void ShowUpdatedHint() =>
+        _tray.ShowBalloonTip(6000, "SicherungsWächter wurde aktualisiert",
+            $"Jetzt läuft Version {Updater.CurrentVersion.ToString(3)}. Deine Sicherungen laufen weiter wie bisher.", ToolTipIcon.Info);
+
     private void OpenSettings()
     {
         using var f = new SettingsForm(_service.Settings, _service.DataDirectory);
@@ -431,6 +510,7 @@ public sealed class MainForm : Form
         _service.Settings.ShowNotifications = f.ShowNotifications;
         _service.Settings.FullScanIntervalMinutes = f.FullScanMinutes;
         _service.Settings.Theme = f.ThemeChoice;
+        _service.Settings.CheckForUpdates = f.CheckForUpdates;
         _service.Save();
         Autostart.Set(f.StartWithWindows, _dataDirArg);
         Theme.Set(f.ThemeChoice);
@@ -457,6 +537,7 @@ public sealed class MainForm : Form
         {
             _timer.Dispose();
             _tray.Dispose();
+            _updateTimer.Dispose();
             _trayIcon?.Dispose();
             Theme.Changed -= ApplyTheme;
         }

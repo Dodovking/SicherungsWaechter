@@ -7,6 +7,13 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Contains(Updater.SelfTestArg, StringComparer.OrdinalIgnoreCase))
+        {
+            _ = typeof(BackupService).Assembly.GetName();
+            using (new Label()) { }
+            Environment.Exit(Updater.SelfTestExitCode);
+        }
+        bool afterUpdate = Updater.WaitForPreviousInstance(args);
         bool minimized = args.Contains("--minimiert", StringComparer.OrdinalIgnoreCase);
         string? dataDir = ArgValue(args, "--daten");
         string? design = ArgValue(args, "--design");
@@ -24,6 +31,8 @@ internal static class Program
         var store = new SettingsStore(dataDir);
         bool firstRun = !File.Exists(store.SettingsFile);
         using var service = new BackupService(store);
+        Updater.CleanupLeftovers();
+        if (afterUpdate) service.Log.Write(LogLevel.Info, "", $"Aktualisiert auf Version {Updater.CurrentVersion.ToString(3)}");
 
         Application.ThreadException += (_, e) =>
         {
@@ -50,7 +59,7 @@ internal static class Program
             Autostart.Set(true, dataDir);
         }
 
-        using var form = new MainForm(service, dataDir);
+        using var form = new MainForm(service, dataDir, Updater.SourceUrl(args)) { StartArgs = args };
         var waiter = new Thread(() =>
         {
             while (true)
@@ -63,6 +72,7 @@ internal static class Program
 
         service.Start();
         if (!minimized) form.Show();
+        if (afterUpdate) form.ShowUpdatedHint();
         Application.Run();
     }
 
