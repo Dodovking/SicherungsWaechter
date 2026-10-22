@@ -28,6 +28,7 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        LowImpact.OnBattery = () => SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Offline;
         var store = new SettingsStore(dataDir);
         bool firstRun = !File.Exists(store.SettingsFile);
         using var service = new BackupService(store);

@@ -232,6 +232,7 @@ public sealed class MainForm : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        RefreshAll();
         if (_service.Settings.CheckForUpdates && DateTime.Now - _lastUpdateCheck > TimeSpan.FromMinutes(10))
             _ = CheckUpdatesQuietly();
     }
@@ -366,7 +367,8 @@ public sealed class MainForm : Form
 
     private void RefreshAll()
     {
-        foreach (var c in _jobsPage.Controls.OfType<JobCard>()) c.RefreshInfo();
+        if (Visible && WindowState != FormWindowState.Minimized)
+            foreach (var c in _jobsPage.Controls.OfType<JobCard>()) c.RefreshInfo();
         RefreshSummary();
     }
 
@@ -553,6 +555,7 @@ public sealed class MainForm : Form
         _service.Settings.FullScanIntervalMinutes = f.FullScanMinutes;
         _service.Settings.Theme = f.ThemeChoice;
         _service.Settings.CheckForUpdates = f.CheckForUpdates;
+        _service.Settings.SaveResources = f.SaveResources;
         _service.Save();
         Autostart.Set(f.StartWithWindows, _dataDirArg);
         Theme.Set(f.ThemeChoice);

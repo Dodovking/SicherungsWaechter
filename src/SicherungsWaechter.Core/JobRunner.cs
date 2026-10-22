@@ -25,6 +25,7 @@ public sealed class JobRunner : IDisposable
 
     private readonly BackupLog _log;
     private readonly Func<TimeSpan> _fullScanInterval;
+    private readonly Func<bool> _saveResources;
     private readonly object _lock = new();
     private readonly List<Op> _pending = [];
     private readonly SemaphoreSlim _signal = new(0);
@@ -51,11 +52,12 @@ public sealed class JobRunner : IDisposable
     public event Action<JobRunner>? Changed;
     public event Action<JobRunner, JobState, string>? Problem;
 
-    public JobRunner(BackupJob job, BackupLog log, Func<TimeSpan> fullScanInterval, bool paused)
+    public JobRunner(BackupJob job, BackupLog log, Func<TimeSpan> fullScanInterval, bool paused, Func<bool>? saveResources = null)
     {
         Job = job;
         _log = log;
         _fullScanInterval = fullScanInterval;
+        _saveResources = saveResources ?? (() => false);
         _paused = paused;
     }
 
@@ -134,7 +136,8 @@ public sealed class JobRunner : IDisposable
         }
 
         SyncEngine engine;
-        try { engine = new SyncEngine(Job, Log); }
+        bool gentle = _saveResources();
+        try { engine = new SyncEngine(Job, Log) { MaxBytesPerSecond = gentle ? LowImpact.CopyBytesPerSecond : 0, PauseWhileScanning = gentle }; }
         catch (Exception ex)
         {
             SetState(JobState.Error, "Ungültiger Pfad: " + ex.Message);
@@ -207,8 +210,16 @@ public sealed class JobRunner : IDisposable
         });
     }
 
+    private TimeSpan NextScanInterval()
+    {
+        var interval = _fullScanInterval();
+        if (_saveResources() && LowImpact.OnBattery()) interval *= LowImpact.BatteryScanFactor;
+        return interval;
+    }
+
     private void Run(SyncEngine engine, CancellationToken ct, bool full, Func<SyncStats> work)
     {
+        using var _ = LowImpact.Enter(_saveResources());
         SetState(JobState.Working, full ? "Prüft alle Dateien …" : "Sichert Änderungen …");
         try
         {
@@ -217,7 +228,7 @@ public sealed class JobRunner : IDisposable
             {
                 Requeue(engine.BusyFiles.Select(p => new Op(OpKind.Change, p, null, 0)));
                 LastFullSync = DateTime.Now;
-                _nextFullSync = DateTime.Now + _fullScanInterval();
+                _nextFullSync = DateTime.Now + NextScanInterval();
                 Log(stats.Errors > 0 ? LogLevel.Warning : LogLevel.Info, "Komplettprüfung abgeschlossen: " + stats.Summary());
             }
             else if (stats.AnyChange || stats.Errors > 0)

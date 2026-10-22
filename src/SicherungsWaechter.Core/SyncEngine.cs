@@ -63,6 +63,9 @@ public sealed class SyncEngine
 
     public JobLayout Layout { get; }
     public List<string> BusyFiles { get; } = [];
+    public long MaxBytesPerSecond { get; set; }
+    public bool PauseWhileScanning { get; set; }
+    private int _scanned;
 
     public SyncEngine(BackupJob job, Action<LogLevel, string>? log = null, Func<DateTime>? now = null)
     {
@@ -206,6 +209,7 @@ public sealed class SyncEngine
         foreach (var f in files)
         {
             ct.ThrowIfCancellationRequested();
+            ScanBreather(ct);
             seenFiles.Add(f.Name);
             var rel = Combine(relDir, f.Name);
             if (_excludes.IsExcluded(rel)) continue;
@@ -263,6 +267,29 @@ public sealed class SyncEngine
         CopyAtomic(src, dst, rel, stats, ct);
     }
 
+    private void CopyStream(Stream input, Stream output, CancellationToken ct)
+    {
+        var buffer = new byte[1 << 20];
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        long done = 0;
+        int n;
+        while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            output.Write(buffer, 0, n);
+            done += n;
+            if (MaxBytesPerSecond <= 0) continue;
+            var ahead = TimeSpan.FromSeconds((double)done / MaxBytesPerSecond) - clock.Elapsed;
+            if (ahead > TimeSpan.Zero) ct.WaitHandle.WaitOne(ahead);
+        }
+        ct.ThrowIfCancellationRequested();
+    }
+
+    private void ScanBreather(CancellationToken ct)
+    {
+        if (PauseWhileScanning && ++_scanned % LowImpact.ScanBatch == 0) ct.WaitHandle.WaitOne(LowImpact.ScanPause);
+    }
+
     public static bool IsSame(FileInfo a, FileInfo b) =>
         a.Length == b.Length && Math.Abs((a.LastWriteTimeUtc - b.LastWriteTimeUtc).TotalSeconds) <= 2;
 
@@ -277,8 +304,7 @@ public sealed class SyncEngine
             using (var input = new FileStream(src.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan))
             using (var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
             {
-                input.CopyTo(output, 1 << 20);
-                ct.ThrowIfCancellationRequested();
+                CopyStream(input, output, ct);
                 output.Flush(true);
             }
             File.SetLastWriteTimeUtc(tmp, mtime);

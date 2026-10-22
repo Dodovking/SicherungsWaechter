@@ -38,7 +38,7 @@ public sealed class BackupService : IDisposable
 
     private JobRunner CreateRunner(BackupJob job)
     {
-        var r = new JobRunner(job, Log, () => TimeSpan.FromMinutes(Math.Max(5, Settings.FullScanIntervalMinutes)), Settings.Paused);
+        var r = new JobRunner(job, Log, () => TimeSpan.FromMinutes(Math.Max(5, Settings.FullScanIntervalMinutes)), Settings.Paused, () => Settings.SaveResources);
         r.Changed += x => RunnerChanged?.Invoke(x);
         r.Problem += (x, s, t) => Problem?.Invoke(x, s, t);
         r.Start();

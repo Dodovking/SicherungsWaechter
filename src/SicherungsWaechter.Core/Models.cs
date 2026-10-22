@@ -55,4 +55,5 @@ public sealed class AppSettings
     public bool Paused { get; set; }
     public bool TrayHintShown { get; set; }
     public bool CheckForUpdates { get; set; } = true;
+    public bool SaveResources { get; set; } = true;
 }
