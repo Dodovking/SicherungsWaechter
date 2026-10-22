@@ -18,6 +18,13 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _updateTimer = new();
     private readonly UpdateChecker _updateChecker;
     private UpdateInfo? _available;
+    private readonly Panel _banner = new() { Dock = DockStyle.Top, Visible = false };
+    private readonly Label _bannerText = Make.Label("", Ui.Bold);
+    private readonly FlatButton _bannerInstall = new("Jetzt aktualisieren", ButtonKind.Primary);
+    private readonly FlatButton _bannerLater = new("Später", ButtonKind.Ghost);
+    private Version? _dismissedVersion;
+    private DateTime _lastUpdateCheck = DateTime.MinValue;
+    private bool _checkingUpdates;
     private bool _updating;
     private readonly Panel _tabBar = new() { Dock = DockStyle.Top };
     private readonly Segmented _tabs = new("Sicherungsaufträge", "Protokoll");
@@ -61,7 +68,9 @@ public sealed class MainForm : Form
         _content.Padding = new Padding(Ui.S(24), Ui.S(4), Ui.S(24), Ui.S(20));
         Controls.Add(_content);
         Controls.Add(_tabBar);
+        Controls.Add(_banner);
         Controls.Add(_header);
+        BuildBanner();
 
         BuildTray();
 
@@ -88,7 +97,7 @@ public sealed class MainForm : Form
         _updateTimer.Interval = 15_000;
         _updateTimer.Tick += async (_, _) =>
         {
-            _updateTimer.Interval = 12 * 60 * 60 * 1000;
+            _updateTimer.Interval = 60 * 60 * 1000;
             if (_service.Settings.CheckForUpdates) await CheckUpdatesQuietly();
         };
         _updateTimer.Start();
@@ -133,6 +142,27 @@ public sealed class MainForm : Form
         _tabBar.Height = Ui.S(62);
         _tabBar.Controls.Add(_tabs);
         _tabs.Location = new Point(Ui.S(24), Ui.S(16));
+    }
+
+    private void BuildBanner()
+    {
+        _banner.Height = Ui.S(56);
+        _banner.Controls.AddRange([_bannerText, _bannerInstall, _bannerLater]);
+        _banner.Layout += (_, _) =>
+        {
+            _bannerLater.Location = new Point(_banner.Width - Ui.S(24) - _bannerLater.Width, (_banner.Height - _bannerLater.Height) / 2);
+            _bannerInstall.Location = new Point(_bannerLater.Left - Ui.S(8) - _bannerInstall.Width, _bannerLater.Top);
+            _bannerText.Location = new Point(Ui.S(26), (_banner.Height - _bannerText.PreferredHeight) / 2);
+        };
+        _banner.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Theme.P.Border);
+            e.Graphics.DrawLine(pen, 0, _banner.Height - 1, _banner.Width, _banner.Height - 1);
+            using var bar = new SolidBrush(Theme.P.Accent);
+            e.Graphics.FillRectangle(bar, 0, 0, Ui.S(4), _banner.Height);
+        };
+        _bannerInstall.Click += (_, _) => OpenUpdate();
+        _bannerLater.Click += (_, _) => { _dismissedVersion = _available?.Version; _banner.Visible = false; };
     }
 
     private void BuildEmptyState()
@@ -202,6 +232,8 @@ public sealed class MainForm : Form
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         Activate();
         BringToFront();
+        if (_service.Settings.CheckForUpdates && DateTime.Now - _lastUpdateCheck > TimeSpan.FromMinutes(10))
+            _ = CheckUpdatesQuietly();
     }
 
     private void ExitApp()
@@ -248,6 +280,8 @@ public sealed class MainForm : Form
         Theme.Apply(this);
         _header.BackColor = Theme.P.Surface;
         _tabBar.BackColor = Theme.P.Back;
+        _banner.BackColor = Ui.Blend(Theme.P.Back, Theme.P.Accent, Theme.P.Dark ? 0.22f : 0.10f);
+        _bannerText.ForeColor = Theme.P.Text;
         _content.BackColor = Theme.P.Back;
         _title.ForeColor = Theme.P.Text;
         _subtitle.ForeColor = Theme.P.Muted;
@@ -443,9 +477,13 @@ public sealed class MainForm : Form
 
     private async Task CheckUpdatesQuietly()
     {
+        if (_checkingUpdates || _updating) return;
+        _checkingUpdates = true;
+        _lastUpdateCheck = DateTime.Now;
         UpdateInfo? info;
         try { info = await _updateChecker.GetLatestAsync(); }
         catch (Exception e) when (e is UpdateException or OperationCanceledException) { return; }
+        finally { _checkingUpdates = false; }
         if (info == null || !info.IsNewerThan(Updater.CurrentVersion) || IsDisposed) return;
         bool fresh = _available?.Version != info.Version;
         SetAvailable(info);
@@ -461,6 +499,10 @@ public sealed class MainForm : Form
         _update.Kind = _available == null ? ButtonKind.Ghost : ButtonKind.Primary;
         _update.FitWidth();
         _update.Invalidate();
+        if (_available != null)
+            _bannerText.Text = $"Neue Version {_available.Version.ToString(3)} verfügbar  ·  Installiert: {Updater.CurrentVersion.ToString(3)}";
+        _banner.Visible = _available != null && _available.Version != _dismissedVersion;
+        _banner.PerformLayout();
         _trayUpdate.Text = _available == null ? "Nach Updates suchen …" : $"Update {_available.Version.ToString(3)} installieren …";
         _header.PerformLayout();
     }
