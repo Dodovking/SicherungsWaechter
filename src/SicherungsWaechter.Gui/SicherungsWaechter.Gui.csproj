@@ -13,7 +13,7 @@
     <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
     <Product>SicherungsWächter</Product>
     <Company>Dominik</Company>
-    <Version>1.1.4</Version>
+    <Version>1.2.0</Version>
     <SatelliteResourceLanguages>de</SatelliteResourceLanguages>
   </PropertyGroup>
 

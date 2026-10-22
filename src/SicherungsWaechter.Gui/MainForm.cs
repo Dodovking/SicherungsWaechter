@@ -27,12 +27,15 @@ public sealed class MainForm : Form
     private bool _checkingUpdates;
     private bool _updating;
     private readonly Panel _tabBar = new() { Dock = DockStyle.Top };
-    private readonly Segmented _tabs = new("Sicherungsaufträge", "Protokoll");
+    private readonly Segmented _tabs = new("Sicherungsaufträge", "Protokoll", "Werkzeuge");
     private readonly Panel _content = new() { Dock = DockStyle.Fill };
     private readonly CardList _jobsPage = new();
     private readonly Panel _empty = new();
     private readonly Panel _logPage = new() { Dock = DockStyle.Fill, Visible = false };
     private readonly LogList _logList = new();
+    private readonly Panel _toolsPage = new() { Dock = DockStyle.Fill, Visible = false, AutoScroll = true };
+    private readonly HashSet<string> _lowSpaceWarned = new(StringComparer.OrdinalIgnoreCase);
+    private int _ticks;
     private readonly Segmented _logFilter = new("Alle Meldungen", "Nur Probleme");
     private readonly NotifyIcon _tray = new();
     private readonly ContextMenuStrip _trayMenu = new();
@@ -61,10 +64,12 @@ public sealed class MainForm : Form
 
         BuildHeader();
         BuildLogPage();
+        BuildToolsPage();
         BuildEmptyState();
         _content.Controls.Add(_jobsPage);
         _content.Controls.Add(_empty);
         _content.Controls.Add(_logPage);
+        _content.Controls.Add(_toolsPage);
         _content.Padding = new Padding(Ui.S(24), Ui.S(4), Ui.S(24), Ui.S(20));
         Controls.Add(_content);
         Controls.Add(_tabBar);
@@ -208,14 +213,75 @@ public sealed class MainForm : Form
         _logList.Reload(_service.Log.Snapshot(), false);
     }
 
+    private void BuildToolsPage()
+    {
+        var tools = new (string Title, string Text, Func<bool, Form> Create)[]
+        {
+            ("Doppelte Dateien finden", "Findet Dateien mit genau gleichem Inhalt, egal wie sie heißen oder wo sie liegen, und zeigt, wie viel Platz frei werden kann.", g => new DuplicatesForm(g)),
+            ("Größte Dateien finden", "Zeigt, welche Dateien in einem Ordner oder auf einem Laufwerk am meisten Platz belegen.", g => new LargestForm(g)),
+            ("Ordner vergleichen", "Vergleicht zwei Ordner: was fehlt, was unterschiedlich ist und was gleich ist – z. B. um eine Kopie oder Sicherung zu prüfen.", g => new CompareForm(g)),
+            ("Prüfsumme berechnen", "Berechnet den SHA-256-Fingerabdruck einer Datei. Gleiche Prüfsumme = Bit für Bit identisch, praktisch für Downloads und Kopien.", g => new HashForm(g)),
+        };
+        var cards = new List<Card>();
+        foreach (var (title, text, create) in tools)
+        {
+            var card = new Card();
+            var t = Make.Label(title, Ui.CardTitle);
+            var d = Make.Label(text, Ui.Base, muted: true, width: Ui.S(380));
+            var b = new FlatButton("Öffnen", ButtonKind.Primary);
+            b.Click += (_, _) => create(_service.Settings.SaveResources).Show();
+            card.Controls.AddRange([t, d, b]);
+            card.Layout += (_, _) =>
+            {
+                t.Location = new Point(Ui.S(22), Ui.S(18));
+                d.MaximumSize = new Size(card.Width - Ui.S(44), 0);
+                d.Location = new Point(Ui.S(22), t.Bottom + Ui.S(6));
+                b.Location = new Point(Ui.S(22), card.Height - Ui.S(18) - b.Height);
+            };
+            cards.Add(card);
+            _toolsPage.Controls.Add(card);
+        }
+        var hint = Make.Label("Die Werkzeuge funktionieren mit jedem Ordner und jeder Festplatte – unabhängig von deinen Sicherungen. Ordner kannst du auch einfach ins Werkzeug-Fenster ziehen.", Ui.Small, muted: true);
+        _toolsPage.Controls.Add(hint);
+        _toolsPage.Layout += (_, _) =>
+        {
+            int gap = Ui.S(14), w = (_toolsPage.ClientSize.Width - gap) / 2, h = Ui.S(170);
+            for (int i = 0; i < cards.Count; i++)
+                cards[i].Bounds = new Rectangle(i % 2 * (w + gap), _toolsPage.AutoScrollPosition.Y + i / 2 * (h + gap), w, h);
+            hint.MaximumSize = new Size(_toolsPage.ClientSize.Width, 0);
+            hint.Location = new Point(Ui.S(2), cards[^1].Bottom + Ui.S(14));
+        };
+    }
+
+    private void CheckFreeSpace()
+    {
+        foreach (var r in _service.Runners.Where(r => r.Job.Enabled))
+        {
+            try
+            {
+                var root = PathRules.DriveRoot(r.Job.Target);
+                if (root == null) continue;
+                var di = new DriveInfo(root);
+                if (!di.IsReady) continue;
+                if (!FileTools.IsLowSpace(di.AvailableFreeSpace, di.TotalSize)) { _lowSpaceWarned.Remove(root); continue; }
+                if (!_lowSpaceWarned.Add(root)) continue;
+                var msg = $"Auf {root.TrimEnd('\\')} sind nur noch {SyncStats.FormatBytes(di.AvailableFreeSpace)} frei. Tipp: Unter „Werkzeuge“ findest du große und doppelte Dateien.";
+                _service.Log.Write(LogLevel.Warning, r.Job.DisplayName, "Sicherungsfestplatte wird knapp: " + msg);
+                if (_service.Settings.ShowNotifications) _tray.ShowBalloonTip(8000, "Speicherplatz wird knapp", msg, ToolTipIcon.Warning);
+            }
+            catch { }
+        }
+    }
+
     private void BuildTray()
     {
         var open = new ToolStripMenuItem("Öffnen", null, (_, _) => ShowWindow()) { Font = new Font(Ui.Base, FontStyle.Bold) };
         var sync = new ToolStripMenuItem("Jetzt alles sichern", null, (_, _) => _service.SyncAllNow());
+        var tools = new ToolStripMenuItem("Werkzeuge", null, (_, _) => { ShowWindow(); _tabs.SelectedIndex = 2; });
         _trayPause.Click += (_, _) => TogglePause();
         var exit = new ToolStripMenuItem("Beenden", null, (_, _) => ExitApp());
         _trayUpdate.Click += (_, _) => { ShowWindow(); OpenUpdate(); };
-        _trayMenu.Items.AddRange([open, sync, _trayPause, _trayUpdate, new ToolStripSeparator(), exit]);
+        _trayMenu.Items.AddRange([open, sync, tools, _trayPause, _trayUpdate, new ToolStripSeparator(), exit]);
         _trayMenu.Font = Ui.Base;
         _tray.ContextMenuStrip = _trayMenu;
         _tray.Icon = _icon;
@@ -321,10 +387,12 @@ public sealed class MainForm : Form
     private void ShowPage()
     {
         bool log = _tabs.SelectedIndex == 1;
+        bool tools = _tabs.SelectedIndex == 2;
         _logPage.Visible = log;
+        _toolsPage.Visible = tools;
         bool hasJobs = _service.Runners.Count > 0;
-        _jobsPage.Visible = !log && hasJobs;
-        _empty.Visible = !log && !hasJobs;
+        _jobsPage.Visible = !log && !tools && hasJobs;
+        _empty.Visible = !log && !tools && !hasJobs;
         if (log) _logList.ScrollToEnd();
     }
 
@@ -373,6 +441,7 @@ public sealed class MainForm : Form
 
     private void RefreshAll()
     {
+        if (_ticks++ % 300 == 5) CheckFreeSpace();
         if (Visible && WindowState != FormWindowState.Minimized)
             foreach (var c in _jobsPage.Controls.OfType<JobCard>()) c.RefreshInfo();
         RefreshSummary();

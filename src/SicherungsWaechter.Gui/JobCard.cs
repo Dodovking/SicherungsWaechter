@@ -12,6 +12,7 @@ public sealed class JobCard : Card
     private readonly FlatButton _toggle = new("Ausschalten");
     private readonly FlatButton _remove = new("Entfernen", ButtonKind.Danger);
     private string _freeText = "";
+    private bool _lowSpace;
 
     public JobRunner Runner { get; private set; }
 
@@ -47,6 +48,7 @@ public sealed class JobCard : Card
     {
         _toggle.Text = Runner.Job.Enabled ? "Ausschalten" : "Einschalten";
         _sync.Enabled = Runner.Job.Enabled && Runner.State is not JobState.Paused;
+        _lowSpace = false;
         try
         {
             var root = PathRules.DriveRoot(Runner.Job.Target);
@@ -54,6 +56,11 @@ public sealed class JobCard : Card
             _freeText = di is { IsReady: true }
                 ? $"{root!.TrimEnd('\\')} {(string.IsNullOrEmpty(di.VolumeLabel) ? "" : "„" + di.VolumeLabel + "“ ")}– {SyncStats.FormatBytes(di.AvailableFreeSpace)} frei von {SyncStats.FormatBytes(di.TotalSize)}"
                 : "";
+            if (di is { IsReady: true } && FileTools.IsLowSpace(di.AvailableFreeSpace, di.TotalSize))
+            {
+                _lowSpace = true;
+                _freeText += " – wird knapp!";
+            }
         }
         catch { _freeText = ""; }
         Invalidate();
@@ -126,7 +133,7 @@ public sealed class JobCard : Card
             y += lineH;
         }
         Line(job.SourceIsFile ? "Datei" : "Ordner", job.Source, p.Text);
-        Line("Ziel", mirror + (_freeText.Length > 0 ? "   ·   " + _freeText : ""), p.Text);
+        Line("Ziel", mirror + (_freeText.Length > 0 ? "   ·   " + _freeText : ""), _lowSpace ? p.Warning : p.Text);
         var info = $"Letzte Sicherung {Ui.Relative(Runner.LastBackup)}";
         if (Runner.FilesSaved > 0) info += $"   ·   {Runner.FilesSaved} Datei{(Runner.FilesSaved == 1 ? "" : "en")} seit Programmstart gesichert";
         if (Runner.PendingCount > 0) info += $"   ·   {Runner.PendingCount} Änderung(en) in Warteschlange";
