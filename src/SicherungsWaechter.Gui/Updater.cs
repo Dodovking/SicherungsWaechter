@@ -49,42 +49,81 @@ internal static class Updater
             throw new UpdateException($"Die neue Version startet nicht richtig (Code {p.ExitCode}). Das Update wurde nicht installiert.");
     }
 
-    /// <summary>Renames the running EXE (Windows allows that) and moves the new one into its place.</summary>
+    private static string _target = "";
+    private static bool _relocated;
+    private static string? _movedOld;
+
+    /// <summary>
+    /// Renames the running EXE (Windows allows that) and moves the new one into its place.
+    /// If the running file was deleted meanwhile, installs into %LOCALAPPDATA%\SicherungsWaechter instead.
+    /// </summary>
     public static void Swap()
     {
-        var old = OldExePath;
-        try { if (File.Exists(old)) File.Delete(old); }
-        catch { old = ExePath + "." + DateTime.Now.Ticks + ".alt"; }
-        File.Move(ExePath, old);
+        _target = ExePath;
+        _relocated = false;
+        if (!File.Exists(_target))
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SicherungsWaechter");
+            Directory.CreateDirectory(dir);
+            _target = Path.Combine(dir, "SicherungsWaechter.exe");
+            _relocated = true;
+        }
+        string? old = null;
+        if (File.Exists(_target))
+        {
+            old = _target + ".alt";
+            try { if (File.Exists(old)) File.Delete(old); }
+            catch { old = _target + "." + DateTime.Now.Ticks + ".alt"; }
+            File.Move(_target, old);
+        }
         try
         {
-            File.Move(NewExePath, ExePath);
+            File.Move(NewExePath, _target);
         }
         catch
         {
-            File.Move(old, ExePath);
+            if (old != null) File.Move(old, _target);
             throw;
         }
         _movedOld = old;
     }
 
-    private static string? _movedOld;
-
     public static void Rollback()
     {
         if (_movedOld == null || !File.Exists(_movedOld)) return;
-        try { if (File.Exists(ExePath)) File.Move(ExePath, NewExePath, true); } catch { }
-        File.Move(_movedOld, ExePath, true);
+        try { if (File.Exists(_target)) File.Move(_target, NewExePath, true); } catch { }
+        File.Move(_movedOld, _target, true);
         _movedOld = null;
     }
 
     public static void StartUpdated(IEnumerable<string> originalArgs)
     {
-        var psi = new ProcessStartInfo(ExePath) { UseShellExecute = false, WorkingDirectory = Dir };
+        var psi = new ProcessStartInfo(_target) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(_target)! };
         foreach (var a in StripArgs(originalArgs.ToArray())) psi.ArgumentList.Add(a);
         psi.ArgumentList.Add(AfterUpdateArg);
         psi.ArgumentList.Add(Environment.ProcessId.ToString());
         Process.Start(psi);
+        if (_relocated) CreateShortcuts(_target);
+    }
+
+    private static void CreateShortcuts(string exe)
+    {
+        try
+        {
+            var type = Type.GetTypeFromProgID("WScript.Shell");
+            if (type == null) return;
+            dynamic shell = Activator.CreateInstance(type)!;
+            foreach (var folder in new[] { Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), Environment.GetFolderPath(Environment.SpecialFolder.Programs) })
+            {
+                dynamic lnk = shell.CreateShortcut(Path.Combine(folder, "SicherungsWächter.lnk"));
+                lnk.TargetPath = exe;
+                lnk.WorkingDirectory = Path.GetDirectoryName(exe);
+                lnk.IconLocation = exe + ",0";
+                lnk.Description = "Automatische Sicherung auf eine andere Festplatte";
+                lnk.Save();
+            }
+        }
+        catch { }
     }
 
     private static IEnumerable<string> StripArgs(string[] args)
