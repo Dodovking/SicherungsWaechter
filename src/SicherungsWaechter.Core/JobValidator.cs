@@ -53,9 +53,10 @@ public static class JobValidator
             try
             {
                 var o = JobLayout.For(other);
-                bool clash = layout.IsFile || o.IsFile
-                    ? string.Equals(layout.MirrorOf(layout.IsFile ? layout.Label : ""), o.MirrorOf(o.IsFile ? o.Label : ""), PathRules.Comparison)
-                    : string.Equals(layout.MirrorRoot, o.MirrorRoot, PathRules.Comparison);
+                var mirror = layout.IsFile ? layout.MirrorOf(layout.Label) : layout.MirrorRoot;
+                var otherMirror = o.IsFile ? o.MirrorOf(o.Label) : o.MirrorRoot;
+                bool clash = PathRules.IsSameOrInside(mirror, otherMirror)
+                    || PathRules.IsSameOrInside(otherMirror, mirror);
                 if (clash)
                     issues.Add(new(true, $"Der Auftrag „{other.DisplayName}“ sichert bereits nach {o.MirrorRoot}. Bitte ein anderes Ziel wählen."));
             }
