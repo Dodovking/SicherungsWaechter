@@ -186,7 +186,17 @@ public sealed class SyncEngine
             if (relDir.Length > 0) Guard(stats, relDir, () => HandleDeleted(relDir, stats));
             return;
         }
-        if (relDir.Length > 0 && File.Exists(mirDir)) Guard(stats, relDir, () => HandleDeleted(relDir, stats));
+        if (relDir.Length > 0 && File.Exists(mirDir))
+        {
+            bool ready = false;
+            Guard(stats, relDir, () =>
+            {
+                HandleDeleted(relDir, stats, replacing: true);
+                CreateMirrorDirectory(mirDir);
+                ready = true;
+            });
+            if (!ready) return;
+        }
         CreateMirrorDirectory(mirDir);
 
         var seenFiles = new HashSet<string>(PathRules.Comparer);
@@ -261,7 +271,7 @@ public sealed class SyncEngine
         }
         var dstPath = Layout.MirrorOf(rel);
         if (Directory.Exists(dstPath))
-            HandleDeleted(rel, stats);
+            HandleDeleted(rel, stats, replacing: true);
         var dst = new FileInfo(dstPath);
         if (dst.Exists && IsSame(src, dst)) return;
         CopyAtomic(src, dst, rel, stats, ct);
@@ -336,29 +346,29 @@ public sealed class SyncEngine
         }
     }
 
-    private void HandleDeleted(string rel, SyncStats stats)
+    private void HandleDeleted(string rel, SyncStats stats, bool replacing = false)
     {
         var mirror = Layout.MirrorOf(rel);
-        if (File.Exists(mirror)) DeleteMirrorFile(rel, stats);
+        if (File.Exists(mirror)) DeleteMirrorFile(rel, stats, replacing);
         else if (Directory.Exists(mirror))
         {
-            if (_job.DeleteMode == DeleteMode.KeepInBackup) return;
+            if (_job.DeleteMode == DeleteMode.KeepInBackup && !replacing) return;
             foreach (var f in Directory.EnumerateFiles(mirror, "*", SearchOption.AllDirectories).ToList())
             {
                 var fileRel = Path.GetRelativePath(Layout.MirrorRoot, f);
                 if (f.EndsWith(PathRules.TempSuffix, StringComparison.OrdinalIgnoreCase)) { try { File.Delete(f); } catch { } continue; }
-                Guard(stats, fileRel, () => DeleteMirrorFile(fileRel, stats));
+                Guard(stats, fileRel, () => DeleteMirrorFile(fileRel, stats, replacing));
             }
             Archive.RemoveEmptyDirectories(mirror, keepRoot: false);
         }
     }
 
-    private void DeleteMirrorFile(string rel, SyncStats stats)
+    private void DeleteMirrorFile(string rel, SyncStats stats, bool replacing = false)
     {
         var mirror = Layout.MirrorOf(rel);
         switch (_job.DeleteMode)
         {
-            case DeleteMode.KeepInBackup:
+            case DeleteMode.KeepInBackup when !replacing:
                 return;
             case DeleteMode.DeleteToo:
                 File.Delete(mirror);
