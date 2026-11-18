@@ -105,8 +105,8 @@ public sealed class SyncEngine
     public void CleanupArchives()
     {
         var now = _now();
-        int v = Archive.Cleanup(Layout.VersionRoot, ArchiveKind.Version, _job.VersionRetentionDays, _job.MaxVersionsPerFile, now);
-        int d = Archive.Cleanup(Layout.DeletedRoot, ArchiveKind.Deleted, _job.DeletedRetentionDays, 0, now);
+        int v = Archive.Cleanup(Layout, ArchiveKind.Version, _job.VersionRetentionDays, _job.MaxVersionsPerFile, now);
+        int d = Archive.Cleanup(Layout, ArchiveKind.Deleted, _job.DeletedRetentionDays, 0, now);
         if (v + d > 0) _log(LogLevel.Info, $"Aufgeräumt: {v} alte Versionen, {d} gelöschte Dateien nach Ablauf der Aufbewahrungszeit entfernt");
     }
 
