@@ -97,6 +97,87 @@ public class SyncEngineTests
         Assert.False(Directory.Exists(Path.Combine(d.Target, "_Gelöscht")));
     }
 
+    [Theory]
+    [InlineData(DeleteMode.KeepInBackup, false)]
+    [InlineData(DeleteMode.KeepInBackup, true)]
+    [InlineData(DeleteMode.DeleteToo, false)]
+    [InlineData(DeleteMode.MoveToArchive, false)]
+    public void FullSync_FileBecomesFolder(DeleteMode mode, bool empty)
+    {
+        using var d = new TestDir();
+        var job = Job(d);
+        job.DeleteMode = mode;
+        var engine = new SyncEngine(job);
+        var original = d.Write("x", "old file");
+        engine.FullSync();
+        File.Delete(original);
+        Directory.CreateDirectory(Path.Combine(d.Source, "x"));
+        if (!empty) d.Write(Path.Combine("x", "child.txt"), "child");
+        d.Write("unrelated.txt", "unrelated");
+
+        var stats = engine.FullSync();
+
+        Assert.Equal(0, stats.Errors);
+        Assert.True(Directory.Exists(d.Mirror("x")));
+        if (!empty) Assert.Equal("child", File.ReadAllText(d.Mirror(Path.Combine("x", "child.txt"))));
+        Assert.Equal("unrelated", File.ReadAllText(d.Mirror("unrelated.txt")));
+        var archived = Archive.List(engine.Layout.DeletedRoot, ArchiveKind.Deleted).ToList();
+        if (mode == DeleteMode.DeleteToo) Assert.Empty(archived);
+        else Assert.Equal("old file", File.ReadAllText(Assert.Single(archived).ArchivedPath));
+        Assert.Equal(0, engine.FullSync().Copied);
+    }
+
+    [Theory]
+    [InlineData(DeleteMode.KeepInBackup, false)]
+    [InlineData(DeleteMode.KeepInBackup, true)]
+    [InlineData(DeleteMode.DeleteToo, false)]
+    [InlineData(DeleteMode.MoveToArchive, false)]
+    public void FullSync_FolderBecomesFile(DeleteMode mode, bool empty)
+    {
+        using var d = new TestDir();
+        var job = Job(d);
+        job.DeleteMode = mode;
+        var engine = new SyncEngine(job);
+        Directory.CreateDirectory(Path.Combine(d.Source, "x"));
+        if (!empty) d.Write(Path.Combine("x", "nested", "child.txt"), "old child");
+        engine.FullSync();
+        Directory.Delete(Path.Combine(d.Source, "x"), true);
+        d.Write("x", "new file");
+        d.Write("unrelated.txt", "unrelated");
+
+        var stats = engine.FullSync();
+
+        Assert.Equal(0, stats.Errors);
+        Assert.Equal("new file", File.ReadAllText(d.Mirror("x")));
+        Assert.Equal("unrelated", File.ReadAllText(d.Mirror("unrelated.txt")));
+        var archived = Archive.List(engine.Layout.DeletedRoot, ArchiveKind.Deleted).ToList();
+        if (empty || mode == DeleteMode.DeleteToo) Assert.Empty(archived);
+        else Assert.Equal("old child", File.ReadAllText(Assert.Single(archived).ArchivedPath));
+        Assert.Equal(0, engine.FullSync().Copied);
+    }
+
+    [Fact]
+    public void FullSync_TypeConflictArchiveFails_KeepsOldFileAndContinues()
+    {
+        using var d = new TestDir();
+        var job = Job(d);
+        job.DeleteMode = DeleteMode.KeepInBackup;
+        var engine = new SyncEngine(job);
+        var original = d.Write("x", "old file");
+        engine.FullSync();
+        File.Delete(original);
+        d.Write(Path.Combine("x", "child.txt"), "child");
+        d.Write(Path.Combine("other", "new.txt"), "unrelated");
+        Directory.CreateDirectory(Path.GetDirectoryName(engine.Layout.DeletedRoot)!);
+        File.WriteAllText(engine.Layout.DeletedRoot, "blocked archive");
+
+        var stats = engine.FullSync();
+
+        Assert.True(stats.Errors > 0);
+        Assert.Equal("old file", File.ReadAllText(d.Mirror("x")));
+        Assert.Equal("unrelated", File.ReadAllText(d.Mirror(Path.Combine("other", "new.txt"))));
+    }
+
     [Fact]
     public void Rename_MovesInsideMirror()
     {
