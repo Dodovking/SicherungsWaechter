@@ -109,8 +109,8 @@ public sealed class RestoreForm : Form
         {
             _all = _kind.SelectedIndex switch
             {
-                0 => Archive.List(_layout.VersionRoot, ArchiveKind.Version).ToList(),
-                1 => Archive.List(_layout.DeletedRoot, ArchiveKind.Deleted).ToList(),
+                0 => Archive.List(_layout, ArchiveKind.Version).ToList(),
+                1 => Archive.List(_layout, ArchiveKind.Deleted).ToList(),
                 _ => CurrentFiles(),
             };
             _grid.Columns["when"]!.HeaderText = _kind.SelectedIndex switch { 0 => "Ersetzt am", 1 => "Gelöscht am", _ => "Gesichert" };

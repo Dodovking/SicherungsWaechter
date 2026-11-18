@@ -51,13 +51,26 @@ public static class Archive
         return originalName.Length > 0;
     }
 
+    private static (string Root, string? OnlyRelative) Scope(JobLayout layout, ArchiveKind kind) =>
+        (kind == ArchiveKind.Version ? layout.VersionRoot : layout.DeletedRoot, layout.IsFile ? layout.Label : null);
+
+    public static IEnumerable<ArchiveEntry> List(JobLayout layout, ArchiveKind kind)
+    {
+        var (root, onlyRelative) = Scope(layout, kind);
+        return List(root, kind, onlyRelative);
+    }
+
     public static IEnumerable<ArchiveEntry> List(string root, ArchiveKind kind, string? onlyRelative = null)
     {
         if (!Directory.Exists(root)) yield break;
         IEnumerable<FileInfo> files;
         try
         {
-            files = new DirectoryInfo(root).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true });
+            files = new DirectoryInfo(root).EnumerateFiles("*", new EnumerationOptions
+            {
+                RecurseSubdirectories = onlyRelative == null || !string.IsNullOrEmpty(Path.GetDirectoryName(onlyRelative)),
+                IgnoreInaccessible = true,
+            });
         }
         catch { yield break; }
         foreach (var f in files)
@@ -70,12 +83,21 @@ public static class Archive
         }
     }
 
+    public static int Cleanup(JobLayout layout, ArchiveKind kind, int retentionDays, int maxPerFile, DateTime now)
+    {
+        var (root, onlyRelative) = Scope(layout, kind);
+        return Cleanup(root, kind, retentionDays, maxPerFile, now, onlyRelative);
+    }
+
     /// <summary>Deletes entries older than the retention and beyond the per-file limit. Returns number of deleted files.</summary>
-    public static int Cleanup(string root, ArchiveKind kind, int retentionDays, int maxPerFile, DateTime now)
+    public static int Cleanup(string root, ArchiveKind kind, int retentionDays, int maxPerFile, DateTime now) =>
+        Cleanup(root, kind, retentionDays, maxPerFile, now, null);
+
+    private static int Cleanup(string root, ArchiveKind kind, int retentionDays, int maxPerFile, DateTime now, string? onlyRelative)
     {
         if (!Directory.Exists(root)) return 0;
         int removed = 0;
-        foreach (var group in List(root, kind).GroupBy(e => e.RelativePath, PathRules.Comparer))
+        foreach (var group in List(root, kind, onlyRelative).GroupBy(e => e.RelativePath, PathRules.Comparer))
         {
             int index = 0;
             foreach (var e in group.OrderByDescending(e => e.ArchivedAt))
@@ -87,7 +109,7 @@ public static class Archive
                 try { File.Delete(e.ArchivedPath); removed++; } catch { }
             }
         }
-        if (removed > 0) RemoveEmptyDirectories(root, keepRoot: true);
+        if (removed > 0 && onlyRelative == null) RemoveEmptyDirectories(root, keepRoot: true);
         return removed;
     }
 
